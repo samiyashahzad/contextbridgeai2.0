@@ -53,6 +53,7 @@ with st.sidebar:
     else:
         # 3. If no key, show the Input Box
         st.warning("🔒 Authentication Required")
+        st.info("💡 Get a free API key at: https://aistudio.google.com/apikey")
         manual_key = st.text_input("Enter Google API Key", type="password", help="Paste your key to access the system")
         
         if manual_key:
@@ -77,7 +78,8 @@ if mode == "Sales Rep (Input)":
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        input_text = st.text_area("Paste Call Transcript / Email Thread", height=300)
+        input_text = st.text_area("Paste Call Transcript / Email Thread", height=300, 
+                                   placeholder="Example:\n\nWe spoke with the client today. They want onboarding completed within 2 weeks.\nSales promised priority support for the first month.\nThey are worried about data migration from their old system.\nThey specifically asked for weekly check-ins during onboarding.")
     
     with col2:
         st.info("💡 **Tip:** Paste the full raw text. Our AI will filter out the noise and extract only commitments, risks, and technical needs.")
@@ -90,11 +92,21 @@ if mode == "Sales Rep (Input)":
             else:
                 with st.spinner("AI is processing deal context..."):
                     try:
-                        # Try multiple models in order of preference
+                        # First, let's list available models to debug
+                        try:
+                            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                            st.info(f"🔍 Available models: {', '.join(available_models[:3])}")
+                        except:
+                            pass
+                        
+                        # Try models with full path
                         models_to_try = [
                             "gemini-1.5-flash",
-                            "gemini-1.5-pro",
-                            "gemini-pro"
+                            "gemini-1.5-pro", 
+                            "gemini-pro",
+                            "models/gemini-1.5-flash",
+                            "models/gemini-1.5-pro",
+                            "models/gemini-pro"
                         ]
                         
                         success = False
@@ -105,14 +117,21 @@ if mode == "Sales Rep (Input)":
                                 model = genai.GenerativeModel(model_name)
                                 
                                 prompt = f"""
-                                Extract these fields from the text into JSON:
-                                - goals (The client's main goal)
-                                - commitments (Promises made by us)
-                                - risks (Client hesitations/fears)
-                                - tech_stack (Technical requirements)
+                                Extract these fields from the text into JSON format:
+                                - goals: The client's main goal or objective
+                                - commitments: Promises made by our sales team
+                                - risks: Client hesitations, fears, or concerns
+                                - tech_stack: Technical requirements or stack mentioned
 
                                 Text: {input_text}
-                                Return JSON only. No markdown formatting.
+                                
+                                Return ONLY valid JSON with no markdown formatting. Example:
+                                {{
+                                    "goals": "Complete onboarding in 2 weeks",
+                                    "commitments": "Priority support for first month",
+                                    "risks": "Worried about data migration",
+                                    "tech_stack": "Legacy system integration"
+                                }}
                                 """
                                 
                                 response = model.generate_content(prompt)
@@ -121,21 +140,29 @@ if mode == "Sales Rep (Input)":
                                 clean_text = response.text.replace("```json", "").replace("```", "").strip()
                                 st.session_state.data = json.loads(clean_text)
                                 
-                                st.success(f"✅ Extraction Complete! (Used: {model_name})")
+                                st.success(f"✅ Extraction Complete! (Model: {model_name})")
                                 st.info("Switch to 'Manager' view to review.")
                                 success = True
                                 break
                                 
                             except Exception as e:
-                                last_error = e
+                                last_error = str(e)
                                 continue
                         
                         if not success:
-                            st.error(f"❌ All models failed. Last error: {last_error}")
-                            st.info("Try using a different API key or check your API key permissions at https://aistudio.google.com/apikey")
+                            st.error(f"❌ Could not process with available models.")
+                            with st.expander("🔍 Error Details"):
+                                st.code(last_error)
+                            st.warning("**Solutions:**")
+                            st.markdown("""
+                            1. **Get a NEW API key**: Go to https://aistudio.google.com/apikey
+                            2. Click "Create API Key" → "Create API key in new project"
+                            3. Copy the new key and paste it in the sidebar
+                            4. Make sure you're using a **Google AI Studio** key (not Vertex AI)
+                            """)
                             
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(f"Unexpected error: {e}")
 
 # --- VIEW 2: MANAGER (Review) ---
 elif mode == "Manager (Review)":
@@ -145,7 +172,7 @@ elif mode == "Manager (Review)":
         # Helper to handle Lists vs Strings
         def format_value(value):
             if isinstance(value, list):
-                return ", ".join(value)
+                return "<br>• ".join(value)
             return str(value)
         
         # Get data safely
