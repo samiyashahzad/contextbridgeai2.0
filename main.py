@@ -32,14 +32,14 @@ with st.sidebar:
     if 'api_key' not in st.session_state:
         st.session_state.api_key = None
 
-    # 1. Try to get key from Cloud Secrets
+    # 1. Try to get key from Cloud Secrets first
     if "GOOGLE_API_KEY" in st.secrets:
         st.session_state.api_key = st.secrets["GOOGLE_API_KEY"]
         auth_method = "cloud"
     else:
         auth_method = "manual"
 
-    # 2. Check if we have a key now (either from Cloud or Manual input previously)
+    # 2. Check if we have a key now
     if st.session_state.api_key:
         genai.configure(api_key=st.session_state.api_key)
         
@@ -47,7 +47,6 @@ with st.sidebar:
             st.success("✅ System Online (Auto-Auth)")
         else:
             st.success("✅ System Online (Manual)")
-            # Option to reset if needed
             if st.button("Logout / Change Key"):
                 st.session_state.api_key = None
                 st.rerun()
@@ -58,7 +57,7 @@ with st.sidebar:
         
         if manual_key:
             st.session_state.api_key = manual_key
-            st.rerun() # <--- THIS IS THE FIX: Forces the app to reload and hide the box
+            st.rerun()
     
     st.divider()
     st.markdown("**User Mode:**")
@@ -91,27 +90,50 @@ if mode == "Sales Rep (Input)":
             else:
                 with st.spinner("AI is processing deal context..."):
                     try:
-                        # Using gemini-pro as a safe fallback for 404 errors
-                        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+                        # Try multiple models in order of preference
+                        models_to_try = [
+                            "gemini-1.5-flash",
+                            "gemini-1.5-pro",
+                            "gemini-pro"
+                        ]
                         
-                        prompt = f"""
-                        Extract these fields from the text into JSON:
-                        - goals (The client's main goal)
-                        - commitments (Promises made by us)
-                        - risks (Client hesitations/fears)
-                        - tech_stack (Technical requirements)
+                        success = False
+                        last_error = None
+                        
+                        for model_name in models_to_try:
+                            try:
+                                model = genai.GenerativeModel(model_name)
+                                
+                                prompt = f"""
+                                Extract these fields from the text into JSON:
+                                - goals (The client's main goal)
+                                - commitments (Promises made by us)
+                                - risks (Client hesitations/fears)
+                                - tech_stack (Technical requirements)
 
-                        Text: {input_text}
-                        Return JSON only. No markdown formatting.
-                        """
+                                Text: {input_text}
+                                Return JSON only. No markdown formatting.
+                                """
+                                
+                                response = model.generate_content(prompt)
+                                
+                                # Clean up response to ensure it is valid JSON
+                                clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                                st.session_state.data = json.loads(clean_text)
+                                
+                                st.success(f"✅ Extraction Complete! (Used: {model_name})")
+                                st.info("Switch to 'Manager' view to review.")
+                                success = True
+                                break
+                                
+                            except Exception as e:
+                                last_error = e
+                                continue
                         
-                        response = model.generate_content(prompt)
-                        
-                        # Clean up response to ensure it is valid JSON
-                        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-                        st.session_state.data = json.loads(clean_text)
-                        
-                        st.success("Extraction Complete! Switch to 'Manager' view to review.")
+                        if not success:
+                            st.error(f"❌ All models failed. Last error: {last_error}")
+                            st.info("Try using a different API key or check your API key permissions at https://aistudio.google.com/apikey")
+                            
                     except Exception as e:
                         st.error(f"Error: {e}")
 
@@ -141,10 +163,9 @@ elif mode == "Manager (Review)":
                 st.markdown(f'<div class="success-box"><b>🤝 Commitments Made</b><br>{commitments}</div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="card"><b>💻 Tech Stack</b><br>{tech}</div>', unsafe_allow_html=True)
         
-        # THE PHANTOM BUTTON
         if st.button("✅ Approve & Publish Handover"):
             with st.spinner("Syncing to CRM and notifying Customer Success..."):
-                time.sleep(2) # Fake processing delay
+                time.sleep(2)
             st.balloons()
             st.success("Success! Handover package has been finalized and sent.")
             
